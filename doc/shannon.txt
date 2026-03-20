@@ -1,0 +1,140 @@
+*shannon.txt*  Send prompts from Neovim to Claude Code via tmux
+
+INTRODUCTION                                            *shannon*
+
+Shannon is a Neovim plugin for sending prompts to a running Claude Code
+session in an adjacent tmux pane. It opens a floating window where you
+type a prompt; when you save the prompt (with |:w|) or save and close the
+window (with |:x|) it delivers it to Claude along with file and line context.
+To close the window without sending to Claude, use |:fclo| or |:q!|.
+
+REQUIREMENTS                                            *shannon-requirements*
+
+- Neovim 0.9+
+- tmux (Shannon locates Claude Code by walking the process tree of
+  sibling panes)
+
+INSTALLATION                                            *shannon-installation*
+
+With lazy.nvim: >lua
+
+    { 'wincent/shannon.nvim', config = true }
+<
+With packer.nvim: >lua
+
+    use {
+      'wincent/shannon.nvim',
+      config = function()
+        require('wincent.shannon').setup()
+      end,
+    }
+<
+With mini.deps: >lua
+
+    add('wincent/shannon.nvim')
+    require('wincent.shannon').setup()
+<
+Manual: clone into `pack/bundle/opt/shannon` (or similar), then
+`packadd shannon` and call `require('wincent.shannon').setup()`.
+
+SETUP                                                   *shannon-setup*
+
+Call `setup()` to create default keymaps: >lua
+
+    require('wincent.shannon').setup()
+<
+                                                        *shannon-setup-options*
+`setup()` accepts an optional table with the following keys:
+
+  `keymaps`   (boolean, default `true`)
+              When `true`, create the default keymaps listed below.
+              Set to `false` to suppress keymap creation.
+
+  `prefix`    (string, default `"<Leader>s"`)
+              Keymap prefix used for all default mappings.
+
+Default keymaps (with the default `<Leader>s` prefix):
+
+  `{prefix}s` |:Shannon|           (normal and visual)
+  `{prefix}n` |:ShannonNextMark|   (normal)
+  `{prefix}p` |:ShannonPreviousMark| (normal)
+  `{prefix}c` |:ShannonClearMarks| (normal)
+
+To use a different prefix: >lua
+
+    require('wincent.shannon').setup({ prefix = '<Leader>x' })
+<
+To manage keymaps yourself: >lua
+
+    require('wincent.shannon').setup({ keymaps = false })
+<
+USAGE                                                   *shannon-usage*
+
+                                                        *:Shannon*
+:[range]Shannon      Open a floating prompt window. Write the buffer
+                     (|:w| or |:x|) to send the prompt to the Claude Code pane.
+
+In normal mode, the current file and cursor line are sent as context.
+In visual mode, the selected range and text are included.
+
+While the floating window is open, |CTRL-Y| and |CTRL-E| scroll the
+parent window so you can review surrounding code without leaving the
+prompt.
+
+If the prompt starts with `/btw`, the prompt text is placed before the
+context line (useful for getting Claude to immediately respond to the
+new prompt even if it is already processing another).
+
+NAVIGATION                                          *shannon-navigation*
+
+                                                    *:ShannonNextMark*
+:ShannonNextMark     Jump to the next Shannon annotation (extmark) in
+                     the current buffer. Wraps around to the first mark
+                     when past the last one.
+
+                                                    *:ShannonPreviousMark*
+:ShannonPreviousMark Jump to the previous Shannon annotation (extmark)
+                     in the current buffer. Wraps around to the last
+                     mark when before the first one.
+
+                                                    *:ShannonClearMarks*
+:ShannonClearMarks   Clear all Shannon annotations (extmarks) in the
+                     current buffer.
+
+BIDIRECTIONAL COMMUNICATION                     *shannon-bidirectional*
+
+By default, Shannon provides one-way communication: you send prompts
+from Neovim to Claude Code. With the companion `shannon` Claude plugin
+installed from the `wincent-claude-plugins` marketplace, the reverse
+direction is also available.
+
+The `shannon` Claude plugin teaches Claude Code how to interact with your
+Neovim session via RPC. This enables workflows such as:
+
+- Annotated code review: Claude adds virtual text annotations below
+  lines with issues, using diagnostic highlight groups to convey
+  severity (info, warning, error, hint).
+- Guided walkthroughs: Claude opens files and jumps to relevant lines
+  as it explains code.
+- Error markers: Claude annotates lines with diagnostic-style warnings
+  after analyzing your code.
+
+When Claude adds annotations, you can navigate between them with
+|:ShannonNextMark| and |:ShannonPreviousMark|. Claude will clear marks
+via RPC when the review session is finished, or you can clear them
+manually with |:ShannonClearMarks|.
+
+The `shannon` Claude plugin auto-discovers your Neovim instance by
+walking the tmux process tree (the same mechanism Shannon itself uses
+to find Claude Code), so no manual configuration is needed beyond
+installing the plugin.
+
+INSTALLING THE CLAUDE PLUGIN           *shannon-claude-plugin-install*
+
+Register the marketplace and install the `shannon` Claude plugin: >sh
+
+    claude plugin marketplace add wincent/wincent-claude-plugins
+    claude plugin install shannon
+<
+
+ vim:tw=78:ft=help:norl:
