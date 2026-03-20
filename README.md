@@ -17,14 +17,14 @@ With the companion Claude Code plugin installed, communication flows in both dir
 With [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
-{ 'wincent/shannon.nvim', config = true }
+{ 'wincent/shannon', config = true }
 ```
 
 With [packer.nvim](https://github.com/wbthomason/packer.nvim):
 
 ```lua
 use {
-  'wincent/shannon.nvim',
+  'wincent/shannon',
   config = function()
     require('wincent.shannon').setup()
   end,
@@ -34,7 +34,7 @@ use {
 With [mini.deps](https://github.com/echasnovski/mini.deps):
 
 ```lua
-add('wincent/shannon.nvim')
+add('wincent/shannon')
 require('wincent.shannon').setup()
 ```
 

@@ -18,12 +18,12 @@ INSTALLATION                                            *shannon-installation*
 
 With lazy.nvim: >lua
 
-    { 'wincent/shannon.nvim', config = true }
+    { 'wincent/shannon', config = true }
 <
 With packer.nvim: >lua
 
     use {
-      'wincent/shannon.nvim',
+      'wincent/shannon',
       config = function()
         require('wincent.shannon').setup()
       end,
@@ -31,7 +31,7 @@ With packer.nvim: >lua
 <
 With mini.deps: >lua
 
-    add('wincent/shannon.nvim')
+    add('wincent/shannon')
     require('wincent.shannon').setup()
 <
 Manual: clone into `pack/bundle/opt/shannon` (or similar), then
