@@ -249,8 +249,19 @@ function M.send(context, text)
     )
     return
   end
-  vim.fn.system({ 'tmux', 'load-buffer', tmpfile })
-  vim.fn.system({ 'tmux', 'paste-buffer', '-t', pane })
+  -- Use a unique, named buffer so concurrent Shannon invocations can't race
+  -- on tmux's anonymous-buffer stack (paste-buffer without -b always targets
+  -- the most-recently-created buffer, not the one we just loaded).
+  local buffer_name = string.format('shannon-%d-%d', vim.fn.getpid(), vim.loop.hrtime())
+  vim.fn.system({ 'tmux', 'load-buffer', '-b', buffer_name, tmpfile })
+  -- Use bracketed paste (-p) so agent TUIs (pi, claude) treat embedded
+  -- newlines as literal newlines (like Shift+Enter) instead of submitting
+  -- on the first LF. -r disables tmux's default LF->CR replacement so real
+  -- newlines reach the application. -d deletes our named buffer afterwards
+  -- so we don't leak onto the stack and eventually evict the user's own
+  -- buffers when buffer-limit (default 50) is hit. The trailing send-keys
+  -- Enter is sent outside the bracketed paste and triggers the actual submit.
+  vim.fn.system({ 'tmux', 'paste-buffer', '-d', '-p', '-r', '-b', buffer_name, '-t', pane })
   vim.fn.system({ 'tmux', 'send-keys', '-t', pane, 'Enter' })
   os.remove(tmpfile)
 end
