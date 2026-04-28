@@ -16,8 +16,8 @@
 # (it ships in shannon's pack, which lives on the nvim runtimepath of every
 # machine you use). All routing decisions are local; no per-VM config required.
 #
-# Set NVIM_OPEN_DEBUG=1 to enable verbose tracing.
-# Log path: ${XDG_STATE_HOME:-$HOME/.local/state}/nvim-open/log
+# Logging is opt-in: set NVIM_OPEN_DEBUG=1 to capture trace output to
+# ${XDG_STATE_HOME:-$HOME/.local/state}/nvim-open/log.
 
 set -u
 
@@ -25,27 +25,18 @@ set -u
 # so neither nvim nor tmux is found. Prepend common Mac tool locations.
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/nvim-open"
-LOG="$LOG_DIR/log"
-LOG_MAX=262144   # 256 KiB — truncate above this
-LOG_KEEP=131072  # keep the last 128 KiB after truncation
-
-mkdir -p "$LOG_DIR" 2>/dev/null || true
-
-# Self-rotate if the log grew past the limit. Silent; failures here mustn't
-# block the click.
-if [ -f "$LOG" ]; then
-	size=$(wc -c < "$LOG" 2>/dev/null | tr -d ' ')
-	if [ -n "$size" ] && [ "$size" -gt "$LOG_MAX" ]; then
-		tail -c "$LOG_KEEP" "$LOG" > "$LOG.rot" 2>/dev/null && mv "$LOG.rot" "$LOG"
-	fi
+if [ -n "${NVIM_OPEN_DEBUG:-}" ]; then
+	LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/nvim-open"
+	LOG="$LOG_DIR/log"
+	mkdir -p "$LOG_DIR" 2>/dev/null || true
+	log() { printf '[%s %d] %s\n' "$(date '+%H:%M:%S')" "$$" "$*" >>"$LOG"; }
+else
+	LOG=/dev/null
+	log() { :; }
 fi
 
-log()  { printf '[%s %d] %s\n' "$(date '+%H:%M:%S')" "$$" "$*" >>"$LOG"; }
-dlog() { [ -n "${NVIM_OPEN_DEBUG:-}" ] && log "$@"; :; }
-
-log  "click: argv=$*"
-dlog "env: SSH_CONNECTION='${SSH_CONNECTION:-}' KITTY_WINDOW_ID='${KITTY_WINDOW_ID:-}' TMUX='${TMUX:-}'"
+log "click: argv=$*"
+log "env: SSH_CONNECTION='${SSH_CONNECTION:-}' KITTY_WINDOW_ID='${KITTY_WINDOW_ID:-}' TMUX='${TMUX:-}'"
 
 url="${1:?url required}"
 
@@ -74,7 +65,7 @@ url_path=$(printf '%b' "${url_path//%/\\x}")
 line="${url_fragment%%:*}"
 case "$line" in ''|*[!0-9]*) line=1 ;; esac
 
-dlog "parsed: url_host='$url_host' url_path='$url_path' line=$line"
+log "parsed: url_host='$url_host' url_path='$url_path' line=$line"
 
 # --- Detect ssh in the active tmux pane ------------------------------------
 
@@ -84,7 +75,7 @@ dlog "parsed: url_host='$url_host' url_path='$url_path' line=$line"
 ssh_target=""
 if [ -z "${SSH_CONNECTION:-}" ]; then
 	pane_tty=$(tmux display-message -p '#{pane_tty}' 2>/dev/null) || pane_tty=""
-	dlog "pane_tty='$pane_tty'"
+	log "pane_tty='$pane_tty'"
 
 	if [ -n "$pane_tty" ]; then
 		tty_arg="${pane_tty#/dev/}"
@@ -112,7 +103,7 @@ if [ -z "${SSH_CONNECTION:-}" ]; then
 				if (d != "") { print d; exit }
 			}
 		')
-		dlog "ssh_target='$ssh_target'"
+		log "ssh_target='$ssh_target'"
 	fi
 fi
 
@@ -163,7 +154,7 @@ sock=$("$script_dir/find-nvim-socket" 2>>"$LOG") || {
 	log "→ nvim discovery failed (see preceding stderr lines)"
 	exit 1
 }
-dlog "sock='$sock'"
+log "sock='$sock'"
 
 # --- Dispatch via shannon's RPC --------------------------------------------
 
