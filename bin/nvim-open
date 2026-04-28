@@ -48,8 +48,7 @@ case "$url" in
 esac
 
 rest="${url#file://}"
-url_host="${rest%%/*}"
-rest="/${rest#*/}"
+rest="/${rest#*/}"  # drop host component, keep leading slash
 url_path="${rest%%#*}"
 url_fragment=""
 case "$rest" in
@@ -65,7 +64,7 @@ url_path=$(printf '%b' "${url_path//%/\\x}")
 line="${url_fragment%%:*}"
 case "$line" in ''|*[!0-9]*) line=1 ;; esac
 
-log "parsed: url_host='$url_host' url_path='$url_path' line=$line"
+log "parsed: url_path='$url_path' line=$line"
 
 # --- Detect ssh in the active tmux pane ------------------------------------
 
