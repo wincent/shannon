@@ -157,10 +157,13 @@ log "sock='$sock'"
 
 # --- Dispatch via shannon's RPC --------------------------------------------
 
-# Use shannon's private.open helper. Path is single-quoted in the Lua
-# expression; double any single quotes it contains.
-lua_path="${url_path//\'/\'\'}"
-expr="luaeval(\"require('wincent.shannon.private.open')('${lua_path}', ${line})\")"
+# Use shannon's private.open helper. Path is wrapped in a Lua long-bracket
+# string literal, which has no escape rules: only the literal terminator
+# `]==]` would need escaping, and that sequence cannot appear in a POSIX
+# filesystem path. This sidesteps the layered shell + Vimscript + Lua
+# quoting that would otherwise be required for paths containing quotes
+# or backslashes.
+expr="luaeval(\"require('wincent.shannon.private.open')([==[${url_path}]==], ${line})\")"
 
 if nvim --server "$sock" --remote-expr "$expr" >/dev/null 2>>"$LOG"; then
 	log "→ opened in nvim (sock=$sock, line=$line)"
