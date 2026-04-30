@@ -203,8 +203,25 @@ if [ -n "$ssh_target" ]; then
 	# `%of` would then be mis-parsed as a hex escape.
 	remote_url="file://${url_path_encoded}"
 	[ -n "$url_fragment" ] && remote_url="${remote_url}#${url_fragment}"
-	log "→ forwarded to $ssh_target via ssh"
-	exec ssh "$ssh_target" "\$HOME/.config/nvim/pack/bundle/opt/shannon/bin/nvim-open" "$remote_url"
+
+	# Default ssh options match the trust-on-first-use posture used by
+	# wincent's `bin/sb` for ephemeral VMs: don't prompt on a changed/missing
+	# host key (we have no tty for a prompt), and don't pollute known_hosts
+	# with throwaway VM fingerprints. Override via SHANNON_SSH_OPTS, or set
+	# it to an empty string to opt out entirely.
+	#
+	# We default-when-unset rather than relying on kitty's `env` config
+	# directive because that directive isn't reliably propagated to
+	# `launch --type=background` invocations on macOS.
+	default_ssh_opts="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+	opts_str="${SHANNON_SSH_OPTS-$default_ssh_opts}"
+	ssh_opts=()
+	if [ -n "$opts_str" ]; then
+		read -ra ssh_opts <<<"$opts_str"
+	fi
+
+	log "→ forwarded to $ssh_target via ssh (opts='$opts_str')"
+	exec ssh ${ssh_opts[@]+"${ssh_opts[@]}"} "$ssh_target" "\$HOME/.config/nvim/pack/bundle/opt/shannon/bin/nvim-open" "$remote_url"
 fi
 
 # --- Local routing: find sibling-pane nvim ---------------------------------
