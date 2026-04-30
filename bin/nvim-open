@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # nvim-open: kitty open-actions handler for file:// hyperlinks.
 #
-# Usage: nvim-open <url>
+# Usage: nvim-open <url> [kitty-window-id]
+#
+# The optional second argument is the @active-kitty-window-id placeholder
+# substituted by kitty open-actions; when present and numeric it pins the
+# click-source window deterministically. Empty or non-numeric values fall
+# back to the focus / sole-ssh heuristics.
 #
 # Routes a click on a file:// URL to nvim:
 #
@@ -39,6 +44,7 @@ log "click: argv=$*"
 log "env: SSH_CONNECTION='${SSH_CONNECTION:-}' KITTY_WINDOW_ID='${KITTY_WINDOW_ID:-}' TMUX='${TMUX:-}'"
 
 url="${1:?url required}"
+kitty_window_id="${2:-}"
 
 # --- Parse file://[host]/path[#fragment] -----------------------------------
 
@@ -77,7 +83,11 @@ log "parsed: url_path='$url_path' line=$line"
 #      pane's tty, then ps-walk for ssh.
 #   2. Kitty source window: covers `kitty → ssh` directly (no local tmux).
 #      Ask kitty's remote-control to enumerate foreground processes of the
-#      window the click came from, then walk those.
+#      click-source window, then walk those. The window id arrives as our
+#      $2 via the @active-kitty-window-id placeholder; if absent or
+#      non-numeric (older open-actions.conf, or kitty had no active
+#      window), we fall back to a `state:focused` query plus a sole-ssh
+#      heuristic.
 #
 # Skip both when *we* were invoked over ssh: that means we're already on the
 # remote side of a previous dispatch, and any ssh we found here would
@@ -158,34 +168,52 @@ if [ -z "${SSH_CONNECTION:-}" ]; then
 			return 1
 		}
 
-		# Best signal: the keyboard-focused window. The click had to land
-		# there (the OS focuses on click), but kitty's focus update may not
-		# yet be reflected in `kitten @ ls` by the time the open-action's
-		# launch wakes us up — a race we can lose either way.
-		find_ssh_in_match "state:focused" || true
-		log "kitty (focused) ssh_target='$ssh_target'"
+		# Authoritative: the window id passed in via @active-kitty-window-id.
+		# Kitty substitutes that synchronously at click-dispatch time, inside
+		# its own event loop, so it pins the click-source window before any
+		# focus-race can mutate state. When this is set we trust it absolutely
+		# and skip the heuristic fallbacks below — if the foreground-processes
+		# walk doesn't find ssh in *that* window, the click really did come
+		# from a non-ssh window and local routing is correct.
+		if [[ "$kitty_window_id" =~ ^[0-9]+$ ]]; then
+			find_ssh_in_match "id:$kitty_window_id" || true
+			log "kitty (id:$kitty_window_id) ssh_target='$ssh_target'"
+		else
+			# Fallback path: open-actions.conf doesn't pass the placeholder
+			# (older deployment), or kitty couldn't substitute it (no active
+			# window — rare). Heuristics from here on.
 
-		# Fallback: walk every kitty window. If exactly one of them is
-		# running ssh, the click must have come from there — use it. If
-		# multiple, refuse to guess; better to fall through to local routing
-		# (which will at least give a clear `path does not exist locally`
-		# error in the log) than dispatch to the wrong VM.
-		if [ -z "$ssh_target" ]; then
-			all_pids=$(kitten @ --to="$kitty_socket" ls 2>/dev/null \
-				| jq -r '.[].tabs[].windows[].foreground_processes[].pid' 2>/dev/null)
-			matches=()
-			for pid in $all_pids; do
-				result=$(ps -ww -p "$pid" -o args= 2>/dev/null | extract_ssh_dest)
-				[ -n "$result" ] && matches+=("$result")
-			done
-			case "${#matches[@]}" in
-				0) log "kitty (all-windows) ssh_target='' (no ssh windows)" ;;
-				1)
-					ssh_target="${matches[0]}"
-					log "kitty (sole ssh window) ssh_target='$ssh_target'"
-					;;
-				*) log "kitty (all-windows) ambiguous: ${matches[*]}" ;;
-			esac
+			# Best signal: the keyboard-focused window. The click had to
+			# land there (the OS focuses on click), but kitty's focus
+			# update may not yet be reflected in `kitten @ ls` by the time
+			# the open-action's launch wakes us up — a race we can lose
+			# either way.
+			find_ssh_in_match "state:focused" || true
+			log "kitty (focused) ssh_target='$ssh_target'"
+
+			# Fallback: walk every kitty window. If exactly one of them is
+			# running ssh, the click must have come from there — use it.
+			# If multiple, refuse to guess; better to fall through to
+			# local routing (which will at least give a clear `path does
+			# not exist locally` error in the log) than dispatch to the
+			# wrong VM.
+			if [ -z "$ssh_target" ]; then
+				all_pids=$(kitten @ --to="$kitty_socket" ls 2>/dev/null \
+					| jq -r '.[].tabs[].windows[].foreground_processes[].pid' 2>/dev/null)
+				matches=()
+				for pid in $all_pids; do
+					result=$(ps -ww -p "$pid" -o args= 2>/dev/null | extract_ssh_dest)
+					[ -n "$result" ] && matches+=("$result")
+				done
+				case "${#matches[@]}" in
+					0) log "kitty (all-windows) ssh_target='' (no ssh windows)" ;;
+					1)
+						ssh_target="${matches[0]}"
+						log "kitty (sole ssh window) ssh_target='$ssh_target'"
+						;;
+					*) log "kitty (all-windows) ambiguous: ${matches[*]}" ;;
+				esac
+			fi
 		fi
 	fi
 fi
