@@ -28,7 +28,8 @@ set -u
 
 # kitty open-actions invoke us with a minimal PATH (launchd-style on macOS),
 # so neither nvim nor tmux is found. Prepend common Mac tool locations.
-export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+# `/usr/sbin` is in there for `lsof`, used by `discover_kitty_socket`.
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/sbin:$PATH"
 
 if [ -n "${NVIM_OPEN_DEBUG:-}" ]; then
   LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/nvim-open"
@@ -121,6 +122,79 @@ extract_ssh_dest() {
   '
 }
 
+# Echo a `kitten @ --to=` argument (e.g. `unix:/path/to/kitty.sock-1234`)
+# for the kitty instance hosting this process; return 1 if no socket can
+# be located.
+#
+# Strategies, tried in order:
+#
+#   1. $KITTY_LISTEN_ON. Set automatically in shell sessions when kitty's
+#      remote control is enabled, but typically *not* propagated to
+#      `launch --type=background` children on macOS, where kitty itself
+#      was started by launchd with a bare env. Cheap to check, so we try
+#      it first.
+#
+#   2. Argv of the kitty process that owns us. Found by walking $PPID up
+#      to a `kitty` ancestor (open-actions makes us a direct child) and
+#      otherwise falling back to a sole-instance `pgrep` match. Catches
+#      `--listen-on=...` passed on kitty's command line.
+#
+#   3. The same kitty's open unix sockets, via `lsof`. Catches everything
+#      else: `listen_on` set in kitty.conf (with or without a
+#      `{kitty_pid}` placeholder), the auto-PID-suffix kitty appends to
+#      the configured path, etc. This is the strategy that makes the
+#      script portable across machines without per-host symlink tricks
+#      or hardcoded paths.
+discover_kitty_socket() {
+  if [ -n "${KITTY_LISTEN_ON:-}" ]; then
+    printf '%s\n' "$KITTY_LISTEN_ON"
+    return 0
+  fi
+
+  local pid kitty_pid="" comm matches
+  pid=$$
+  while [ -n "$pid" ] && [ "$pid" != 1 ]; do
+    comm=$(ps -p "$pid" -o comm= 2>/dev/null)
+    case "${comm##*/}" in
+      kitty) kitty_pid="$pid"; break ;;
+    esac
+    pid=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ')
+  done
+  if [ -z "$kitty_pid" ]; then
+    matches=$(pgrep -U "$(id -u)" -x kitty 2>/dev/null)
+    if [ -n "$matches" ] \
+       && [ "$(printf '%s\n' "$matches" | wc -l | tr -d ' ')" = 1 ]; then
+      kitty_pid="$matches"
+    fi
+  fi
+  [ -z "$kitty_pid" ] && return 1
+
+  local argv listen_on=""
+  argv=$(ps -ww -p "$kitty_pid" -o args= 2>/dev/null) || argv=""
+  listen_on=$(printf '%s\n' "$argv" \
+    | awk 'BEGIN{RS=" "} /^--listen-on=/ { sub(/^--listen-on=/,""); print; exit }')
+  if [ -n "$listen_on" ]; then
+    printf '%s\n' "$listen_on"
+    return 0
+  fi
+
+  # `lsof -a -p PID -U -F n` emits, for each unix socket FD, an `n`-prefixed
+  # name field: `n->ADDR` for connected sockets (skipped) and `n/path` or
+  # `n@name` for listening ones (filesystem and Linux abstract namespaces
+  # respectively). Either is a valid `unix:` argument for `kitten @`.
+  if command -v lsof >/dev/null 2>&1; then
+    local sock
+    sock=$(lsof -a -p "$kitty_pid" -U -F n 2>/dev/null \
+      | awk '/^n[\/@]/ { sub(/^n/, ""); print; exit }')
+    if [ -n "$sock" ]; then
+      printf 'unix:%s\n' "$sock"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
 ssh_target=""
 if [ -z "${SSH_CONNECTION:-}" ]; then
   # Path 1: local tmux pane.
@@ -147,9 +221,15 @@ if [ -z "${SSH_CONNECTION:-}" ]; then
     #    argv as the kernel sees it.
     #
     # `launch --type=background` invocations inherit kitty's launchd-style
-    # env (no KITTY_LISTEN_ON, no KITTY_WINDOW_ID), so we fall back to
-    # the canonical socket path from kitty.conf's `listen_on`.
-    kitty_socket="${KITTY_LISTEN_ON:-unix:$HOME/.config/kitty/kitty.sock}"
+    # env on macOS (no KITTY_LISTEN_ON, no KITTY_WINDOW_ID), so we can't
+    # rely on the env var alone — `discover_kitty_socket` falls back to
+    # process-tree walking and `lsof` to find the real socket path,
+    # whatever the user's `listen_on` config happens to be.
+    kitty_socket=$(discover_kitty_socket)
+
+    if [ -z "$kitty_socket" ]; then
+      log "kitty socket discovery failed; skipping kitty source-window check"
+    fi
 
     # Find an ssh process among the foreground_processes of the matched
     # kitty windows. Sets `$ssh_target` and returns 0 on success;
@@ -175,7 +255,9 @@ if [ -z "${SSH_CONNECTION:-}" ]; then
     # and skip the heuristic fallbacks below — if the foreground-processes
     # walk doesn't find ssh in *that* window, the click really did come
     # from a non-ssh window and local routing is correct.
-    if [[ "$kitty_window_id" =~ ^[0-9]+$ ]]; then
+    if [ -z "$kitty_socket" ]; then
+      :  # already logged above; skip the whole branch
+    elif [[ "$kitty_window_id" =~ ^[0-9]+$ ]]; then
       find_ssh_in_match "id:$kitty_window_id" || true
       log "kitty (id:$kitty_window_id) ssh_target='$ssh_target'"
     else
