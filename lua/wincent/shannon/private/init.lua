@@ -1,7 +1,5 @@
 local M = {}
 
-local tmux = require('wincent.shannon.private.mux.tmux')
-
 local default_agents = { 'pi', 'claude' }
 local agents = default_agents
 
@@ -13,8 +11,26 @@ function M.set_agents(list)
   end
 end
 
+-- Check tmux first: tmux can run inside a Rex terminal, and then the agent
+-- runs in one of tmux's panes.
+local function multiplexer()
+  for _, name in ipairs({ 'tmux', 'rex' }) do
+    local mux = require('wincent.shannon.private.mux.' .. name)
+    if mux.current_pane() then
+      return mux
+    end
+  end
+end
+
+-- Returns the agent's pane, the multiplexer, and, when the multiplexer found
+-- the agent but cannot deliver to it now, the reason why.
 function M.get_pane()
-  return tmux.find_agent(agents)
+  local mux = multiplexer()
+  if not mux then
+    return nil
+  end
+  local pane, reason = mux.find_agent(agents)
+  return pane, mux, reason
 end
 
 function M.prompt(opts)
@@ -208,15 +224,17 @@ function M.send(context, text)
   f:write(prompt)
   f:close()
 
-  local pane = M.get_pane()
+  local pane, mux, reason = M.get_pane()
   if not pane then
     vim.api.nvim_err_writeln(
-      'shannon: no agent session (' .. table.concat(agents, ', ')
-        .. ') found in tmux (prompt saved to ' .. tmpfile .. ')'
+      'shannon: '
+        .. (reason or ('no agent session (' .. table.concat(agents, ', ')
+          .. ') found in ' .. (mux and mux.name or 'tmux or Rex')))
+        .. ' (prompt saved to ' .. tmpfile .. ')'
     )
     return
   end
-  tmux.paste(pane, tmpfile)
+  mux.paste(pane, tmpfile)
   os.remove(tmpfile)
 end
 
