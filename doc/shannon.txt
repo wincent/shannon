@@ -1,20 +1,23 @@
-*shannon.txt*  Send prompts from Neovim to a terminal coding agent via tmux
+*shannon.txt*  Send prompts from Neovim to a coding agent via tmux or Rex
 
 INTRODUCTION                                            *shannon*
 
 Shannon is a Neovim plugin for sending prompts to a running terminal
-coding agent (pi or Claude Code) in an adjacent tmux pane. It opens a
-floating window where you type a prompt; when you save the prompt (with
-|:w|) or save and close the window (with |:x|) it delivers it to the
-agent along with file and line context. To close the window without
+coding agent (pi or Claude Code) in an adjacent tmux pane or Rex terminal.
+It opens a floating window where you type a prompt; when you save the
+prompt (with |:w|) or save and close the window (with |:x|) it delivers it
+to the agent along with file and line context. To close the window without
 sending, use |:fclo| or |:q!|.
 
 REQUIREMENTS                                            *shannon-requirements*
 
 - Neovim 0.9+
-- tmux (Shannon locates the agent by walking the process tree of
-  sibling panes)
-- A supported agent (pi or Claude Code) running in a sibling tmux pane
+- tmux, or Rex with the `rex` command on your `PATH` (Shannon locates
+  the agent among the processes of sibling panes)
+- A supported agent (pi or Claude Code) running in a sibling tmux pane,
+  or in another terminal in the same Rex window
+
+When Neovim runs in tmux inside a Rex terminal, Shannon uses tmux.
 
 INSTALLATION                                            *shannon-installation*
 
@@ -57,10 +60,20 @@ Call `setup()` to create default keymaps: >lua
 
   `agents`    (string[], default `{ "pi", "claude" }`)
               Ordered list of process names to search for when
-              locating the target tmux pane. Shannon runs
+              locating the target pane. In tmux, Shannon runs
               `pgrep -x <name>` for each entry and walks up the
-              process tree until it reaches a sibling pane's shell;
-              the first match wins, so order the list by preference.
+              process tree until it reaches a sibling pane's shell.
+              In Rex, it uses the name each agent reports for
+              itself through the Program Status Protocol
+              (OSC 7501), which pi and Claude Code (as
+              `claude-code`) send. The first match wins, so order
+              the list by preference.
+
+              In Rex, Shannon also does not send while the agent
+              is waiting for an answer, such as a permission
+              prompt, because the Enter that submits the prompt
+              would answer it. The prompt is kept in a temporary
+              file instead.
               Examples: >lua
 
                   -- pi only
@@ -154,9 +167,9 @@ When the agent adds annotations, you can navigate between them with
 marks via RPC when the review session is finished, or you can clear
 them manually with |:ShannonClearMarks|.
 
-The companion component auto-discovers your Neovim instance by walking
-the tmux process tree (the same mechanism Shannon itself uses to find
-the agent), so no manual configuration is needed beyond installing it.
+The companion component auto-discovers your Neovim instance in sibling
+tmux panes or Rex terminals, so no manual configuration is needed beyond
+installing it.
 
 INSTALLING THE COMPANION COMPONENT     *shannon-companion-install*
 

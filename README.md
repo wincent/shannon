@@ -2,15 +2,17 @@
 
 A bidirectional communication bridge between Neovim and a terminal coding agent such as [Pi](https://pi.dev/).
 
-Shannon opens a floating window in Neovim where you type a prompt. When you save (`:w` or `:x`), it delivers the prompt to a running agent session in a sibling tmux pane, along with file and cursor context. Close without sending using `:fclo` or `:q!`.
+Shannon opens a floating window in Neovim where you type a prompt. When you save (`:w` or `:x`), it delivers the prompt to a running agent session in a sibling tmux pane or Rex terminal, along with file and cursor context. Close without sending using `:fclo` or `:q!`.
 
 With the companion Pi skill installed, communication flows in both directions — the agent can annotate your code with virtual text, open files, and jump to lines.
 
 ## Requirements
 
 - Neovim 0.9+
-- tmux
-- A supported agent (Pi, Claude Code etc) running in a sibling tmux pane
+- tmux, or [Rex](https://www.superlogical.com/rex) with the `rex` command on your `PATH`
+- A supported agent (Pi, Claude Code etc) running in a sibling tmux pane, or in another terminal in the same Rex window
+
+When Neovim runs in tmux inside a Rex terminal, Shannon uses tmux.
 
 ## Installation
 
@@ -67,7 +69,9 @@ require('wincent.shannon').setup({
 
 #### `agents`
 
-Shannon locates the target pane by running `pgrep -x <name>` for each entry in `agents` and walking up the process tree until it reaches a sibling tmux pane's shell. The first match wins, so order the list by preference.
+In tmux, Shannon locates the target pane by running `pgrep -x <name>` for each entry in `agents` and walking up the process tree until it reaches a sibling tmux pane's shell. In Rex, it uses the name each agent reports for itself through the [Program Status Protocol](https://www.superlogical.com/rex/docs/build/program-status) (OSC 7501), which Pi and Claude Code (as `claude-code`) send. The first match wins, so order the list by preference.
+
+In Rex, Shannon also does not send while the agent is waiting for an answer, such as a permission prompt, because the Enter that submits the prompt would answer it. The prompt is kept in a temporary file instead.
 
 Defaults to `{ 'pi', 'claude' }`. Override to pin a single agent, reorder priority, or add others:
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # find-nvim-socket: discover the listen socket of an nvim instance running in
-# a tmux pane. Prints the socket path on success, exits non-zero with an error
-# message on failure.
+# a tmux pane or a Rex terminal. Prints the socket path on success, exits
+# non-zero with an error message on failure.
 #
 # Usage:
 #   find-nvim-socket [--any-pane]
@@ -21,6 +21,11 @@
 #                 the most-recently-active pane (covers callers like kitty's
 #                 open-actions handler that aren't running inside tmux).
 #                 Not consulted when `--any-pane` is given.
+#   REX_BLOCK   — current Rex terminal (block) id. Used when TMUX_PANE is
+#                 unset; then the search covers the terminals in its Rex
+#                 window instead of tmux panes. tmux wins when both are set,
+#                 because tmux can run inside a Rex terminal, and then nvim
+#                 runs in one of tmux's panes.
 
 set -eu
 
@@ -57,11 +62,20 @@ parse_args() {
 
 # --- Helpers ---------------------------------------------------------------
 
-# Print the active tmux pane id (`%N`); return 1 if not in tmux and no
-# active client to query.
+# Return 0 if the panes to search are Rex terminals rather than tmux panes.
+in_rex() {
+  [ -z "${TMUX_PANE:-}" ] && [ -n "${REX_BLOCK:-}" ]
+}
+
+# Print the active tmux pane id (`%N`) or Rex block id; return 1 if in
+# neither and no active tmux client to query.
 current_pane_id() {
   if [ -n "${TMUX_PANE:-}" ]; then
     printf '%s\n' "$TMUX_PANE"
+    return 0
+  fi
+  if in_rex; then
+    printf '%s\n' "$REX_BLOCK"
     return 0
   fi
   tmux display-message -p '#{pane_id}' 2>/dev/null || return 1
@@ -109,6 +123,33 @@ find_nvim_in_panes() {
   return 1
 }
 
+# Echo the pid of an nvim running in a terminal of the current Rex window,
+# other than `$current_pane` when that is set. Rex already knows each
+# terminal's processes, so there is no process tree to walk. Returns 1 if
+# none found.
+find_nvim_in_rex() {
+  local script_dir match
+  local args=(names=nvim)
+  if [ -n "$current_pane" ]; then
+    args+=("exclude=$current_pane")
+  fi
+  script_dir=$(cd "$(dirname "$0")" && pwd)
+  match=$(rex 'do' "$script_dir/../rex/find.lua" "${args[@]}") || return 1
+  [ -n "$match" ] || return 1
+  printf '%s\n' "${match#* }"
+}
+
+# Echo the pid of the nvim to use; return 1 if none found.
+find_nvim() {
+  if in_rex; then
+    find_nvim_in_rex
+  else
+    declare -A pane_pids=()
+    collect_candidate_pane_pids
+    find_nvim_in_panes
+  fi
+}
+
 # Echo the path to nvim's listen socket for `$1`, or fail.
 #
 # Two complications:
@@ -150,20 +191,17 @@ main() {
 
   if [ "$any_pane" -eq 0 ]; then
     current_pane=$(current_pane_id) || {
-      echo "error: not running inside tmux and no active client to query" >&2
+      echo "error: not running inside tmux or Rex, and no tmux client to query" >&2
       exit 1
     }
   fi
 
-  declare -A pane_pids=()
-  collect_candidate_pane_pids
-
   local nvim_pid pid sock
-  nvim_pid=$(find_nvim_in_panes) || {
+  nvim_pid=$(find_nvim) || {
     if [ -n "$current_pane" ]; then
-      echo "error: no nvim found in sibling tmux panes" >&2
+      echo "error: no nvim found in sibling panes" >&2
     else
-      echo "error: no nvim found in any tmux pane" >&2
+      echo "error: no nvim found in any pane" >&2
     fi
     exit 1
   }

@@ -41,3 +41,20 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: bin/test
+
+  # The Rex smoke tests in `tests/test_rex.py` skip without `rex` and `nvim`,
+  # so this job installs both. `--tarball` installs only the rex binary, without
+  # the Rex services, because the tests start their own Rex server.
+  rex:
+    runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Neovim
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes neovim
+      - name: Install Rex
+        run: curl -fsSL https://pkgs.superlogical.com/rex/install.sh | sh -s -- --channel preview --tarball
+      - run: rex version && nvim --version
+      - run: bin/test

@@ -11,43 +11,26 @@ function M.set_agents(list)
   end
 end
 
-local function find_agent_pane()
-  local current_pane = vim.env.TMUX_PANE
-  if not current_pane then
-    return nil
-  end
-
-  local pane_pids = {}
-  local pane_output = vim.fn.system("tmux list-panes -F '#{pane_id} #{pane_pid}'")
-  for pane_id, pane_pid in pane_output:gmatch('(%%[%d]+)%s+(%d+)') do
-    if pane_id ~= current_pane then
-      pane_pids[tonumber(pane_pid)] = pane_id
+-- Check tmux first: tmux can run inside a Rex terminal, and then the agent
+-- runs in one of tmux's panes.
+local function multiplexer()
+  for _, name in ipairs({ 'tmux', 'rex' }) do
+    local mux = require('wincent.shannon.private.mux.' .. name)
+    if mux.current_pane() then
+      return mux
     end
   end
-
-  for _, agent in ipairs(agents) do
-    local agent_pids = vim.fn.system({ 'pgrep', '-x', agent })
-    for pid_str in agent_pids:gmatch('%d+') do
-      local pid = pid_str
-      for _ = 1, 10 do
-        local ppid = vim.trim(vim.fn.system({ 'ps', '-p', pid, '-o', 'ppid=' }))
-        if ppid == '' or ppid == '1' then
-          break
-        end
-        local ppid_num = tonumber(ppid)
-        if ppid_num and pane_pids[ppid_num] then
-          return pane_pids[ppid_num]
-        end
-        pid = ppid
-      end
-    end
-  end
-
-  return nil
 end
 
+-- Returns the agent's pane, the multiplexer, and, when the multiplexer found
+-- the agent but cannot deliver to it now, the reason why.
 function M.get_pane()
-  return find_agent_pane()
+  local mux = multiplexer()
+  if not mux then
+    return nil
+  end
+  local pane, reason = mux.find_agent(agents)
+  return pane, mux, reason
 end
 
 function M.prompt(opts)
@@ -241,28 +224,17 @@ function M.send(context, text)
   f:write(prompt)
   f:close()
 
-  local pane = M.get_pane()
+  local pane, mux, reason = M.get_pane()
   if not pane then
     vim.api.nvim_err_writeln(
-      'shannon: no agent session (' .. table.concat(agents, ', ')
-        .. ') found in tmux (prompt saved to ' .. tmpfile .. ')'
+      'shannon: '
+        .. (reason or ('no agent session (' .. table.concat(agents, ', ')
+          .. ') found in ' .. (mux and mux.name or 'tmux or Rex')))
+        .. ' (prompt saved to ' .. tmpfile .. ')'
     )
     return
   end
-  -- Use a unique, named buffer so concurrent Shannon invocations can't race
-  -- on tmux's anonymous-buffer stack (paste-buffer without -b always targets
-  -- the most-recently-created buffer, not the one we just loaded).
-  local buffer_name = string.format('shannon-%d-%d', vim.fn.getpid(), vim.uv.hrtime())
-  vim.fn.system({ 'tmux', 'load-buffer', '-b', buffer_name, tmpfile })
-  -- Use bracketed paste (-p) so agent TUIs (pi, claude) treat embedded
-  -- newlines as literal newlines (like Shift+Enter) instead of submitting
-  -- on the first LF. -r disables tmux's default LF->CR replacement so real
-  -- newlines reach the application. -d deletes our named buffer afterwards
-  -- so we don't leak onto the stack and eventually evict the user's own
-  -- buffers when buffer-limit (default 50) is hit. The trailing send-keys
-  -- Enter is sent outside the bracketed paste and triggers the actual submit.
-  vim.fn.system({ 'tmux', 'paste-buffer', '-d', '-p', '-r', '-b', buffer_name, '-t', pane })
-  vim.fn.system({ 'tmux', 'send-keys', '-t', pane, 'Enter' })
+  mux.paste(pane, tmpfile)
   os.remove(tmpfile)
 end
 
